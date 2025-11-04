@@ -24,11 +24,13 @@ from typing import (
     Union,
 )
 
+import logging
 import asyncio
 from collections.abc import Awaitable
 import queue
 import threading
 import warnings
+
 
 if TYPE_CHECKING:
     try:
@@ -104,6 +106,8 @@ _TELEMETRY_API_DISABLED_WARNING = (
     "\n"
     "(If you enabled this API recently, you can safely ignore this warning.)"
 )
+
+logger = logging.getLogger(__name__)
 
 
 def get_adk_version() -> Optional[str]:
@@ -304,18 +308,17 @@ def _default_instrumentor_builder(
         return None
 
     import os
-    import logging
 
-    # Enabling debugging at http.client level (requests->urllib3->http.client)
-    # you will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
-    # the only thing missing will be the response.body which is not logged.
-    from http.client import HTTPConnection
+    # # Enabling debugging at http.client level (requests->urllib3->http.client)
+    # # you will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
+    # # the only thing missing will be the response.body which is not logged.
+    # from http.client import HTTPConnection
 
-    HTTPConnection.debuglevel = 1
-    logging.getLogger().setLevel(logging.DEBUG)
-    requests_log = logging.getLogger("urllib3")
-    requests_log.setLevel(logging.DEBUG)
-    requests_log.propagate = True
+    # HTTPConnection.debuglevel = 1
+    logging.getLogger().setLevel(logging.INFO)
+    # requests_log = logging.getLogger("urllib3")
+    # requests_log.setLevel(logging.DEBUG)
+    # requests_log.propagate = True
 
     def _warn_missing_dependency(
         package: str,
@@ -477,7 +480,7 @@ def _default_instrumentor_builder(
 
         logging.getLogger().addHandler(
             opentelemetry.sdk._logs.LoggingHandler(
-                level=logging.DEBUG, logger_provider=logger_provider
+                level=logging.INFO, logger_provider=logger_provider
             )
         )
 
@@ -1008,12 +1011,17 @@ class AdkApp:
             async for event in events_async:
                 # Yield the event data as a dictionary
                 yield _utils.dump_event_for_json(event)
+                logger.info("streamed an event")
         finally:
             # Avoid telemetry data loss having to do with CPU throttling on instance turndown
+            logger.info("starting finalizer")
             _ = await _force_flush_otel(
                 tracing_enabled=self._tracing_enabled(),
                 logging_enabled=bool(self._telemetry_enabled()),
             )
+            logger.info("finalizer done")
+
+        logger.info("returning from async stream_query")
 
     def stream_query(
         self,
