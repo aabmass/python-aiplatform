@@ -240,9 +240,7 @@ def _warn(msg: str):
     if not hasattr(_warn, "_LOGGER"):
         from google.cloud.aiplatform import base
 
-        _warn._LOGGER = base.Logger(
-            __name__
-        )  # pyright: ignore[reportFunctionMemberAccess]
+        _warn._LOGGER = base.Logger(__name__)  # pyright: ignore[reportFunctionMemberAccess]
 
     _warn._LOGGER.warning(msg)  # pyright: ignore[reportFunctionMemberAccess]
 
@@ -266,19 +264,34 @@ async def _force_flush_otel(tracing_enabled: bool, logging_enabled: bool):
         )
         return None
 
-    coros: List[Awaitable[bool]] = []
+    tracer = opentelemetry.trace.get_tracer(__name__)
 
-    if tracing_enabled:
-        tracer_provider = opentelemetry.trace.get_tracer_provider()
-        if isinstance(tracer_provider, opentelemetry.sdk.trace.TracerProvider):
-            coros.append(asyncio.to_thread(tracer_provider.force_flush))
+    with tracer.start_as_current_span("VAE force flush OTel"):
+        coros: List[Awaitable[bool]] = []
 
-    if logging_enabled:
-        logger_provider = opentelemetry._logs.get_logger_provider()
-        if isinstance(logger_provider, opentelemetry.sdk._logs.LoggerProvider):
-            coros.append(asyncio.to_thread(logger_provider.force_flush))
+        if tracing_enabled:
+            tracer_provider = opentelemetry.trace.get_tracer_provider()
+            if isinstance(tracer_provider, opentelemetry.sdk.trace.TracerProvider):
+                coros.append(
+                    asyncio.to_thread(
+                        tracer.start_as_current_span("trace force flush")(
+                            tracer_provider.force_flush
+                        )
+                    )
+                )
 
-    await asyncio.gather(*coros, return_exceptions=True)
+        if logging_enabled:
+            logger_provider = opentelemetry._logs.get_logger_provider()
+            if isinstance(logger_provider, opentelemetry.sdk._logs.LoggerProvider):
+                coros.append(
+                    asyncio.to_thread(
+                        tracer.start_as_current_span("logs force flush")(
+                            logger_provider.force_flush
+                        )
+                    )
+                )
+
+        await asyncio.gather(*coros, return_exceptions=True)
 
 
 def _default_instrumentor_builder(
@@ -291,6 +304,18 @@ def _default_instrumentor_builder(
         return None
 
     import os
+    import logging
+
+    # Enabling debugging at http.client level (requests->urllib3->http.client)
+    # you will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
+    # the only thing missing will be the response.body which is not logged.
+    from http.client import HTTPConnection
+
+    HTTPConnection.debuglevel = 1
+    logging.getLogger().setLevel(logging.DEBUG)
+    requests_log = logging.getLogger("urllib3")
+    requests_log.setLevel(logging.DEBUG)
+    requests_log.propagate = True
 
     def _warn_missing_dependency(
         package: str,
@@ -448,6 +473,12 @@ def _default_instrumentor_builder(
         opentelemetry._logs.set_logger_provider(logger_provider=logger_provider)
         opentelemetry._events.set_event_logger_provider(
             event_logger_provider=event_logger_provider
+        )
+
+        logging.getLogger().addHandler(
+            opentelemetry.sdk._logs.LoggingHandler(
+                level=logging.DEBUG, logger_provider=logger_provider
+            )
         )
 
     try:
