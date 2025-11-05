@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+from contextlib import aclosing
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -1008,10 +1009,11 @@ class AdkApp:
             )
 
         try:
-            async for event in events_async:
-                # Yield the event data as a dictionary
-                yield _utils.dump_event_for_json(event)
-                logger.info("streamed an event")
+            async with aclosing(events_async):
+                async for event in events_async:
+                    # Yield the event data as a dictionary
+                    yield _utils.dump_event_for_json(event)
+                    logger.info("streamed an event")
         finally:
             # Avoid telemetry data loss having to do with CPU throttling on instance turndown
             logger.info("starting finalizer")
